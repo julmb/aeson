@@ -161,6 +161,7 @@ class GToJSON' enc arity f where
     -- (with @enc ~ 'Encoding'@ and @arity ~ 'Zero'@)
     -- and 'liftToEncoding' (if the @arity@ is 'One').
     gToJSON :: Options -> ToArgs enc arity a -> f a -> enc
+    gOmitField :: ToArgs enc arity a -> f a -> Bool
 
 -- | A 'ToArgs' value either stores nothing (for 'ToJSON') or it stores the three
 -- function arguments that encode occurrences of the type parameter (for
@@ -777,12 +778,16 @@ instance {-# OVERLAPPABLE #-} (GToJSON' enc arity a) => GToJSON' enc arity (M1 i
     -- Meta-information, which is not handled elsewhere, is ignored:
     gToJSON opts targs = gToJSON opts targs . unM1
     {-# INLINE gToJSON #-}
+    gOmitField targs = gOmitField targs . unM1
+    {-# INLINE gOmitField #-}
 
 instance GToJSON' enc One Par1 where
     -- Direct occurrences of the last type parameter are encoded with the
     -- function passed in as an argument:
     gToJSON _opts (To1Args _ tj _) = tj . unPar1 -- TODO
     {-# INLINE gToJSON #-}
+    gOmitField (To1Args o _ _) = o . unPar1
+    {-# INLINE gOmitField #-}
 
 instance ( ConsToJSON enc arity a
          , AllNullary          (C1 c a) allNullary
@@ -796,12 +801,16 @@ instance ( ConsToJSON enc arity a
                                      . unM1
         | otherwise = consToJSON opts targs . unM1 . unM1
     {-# INLINE gToJSON #-}
+    gOmitField _ = const False
+    {-# INLINE gOmitField #-}
 
 instance (ConsToJSON enc arity a) => GToJSON' enc arity (C1 c a) where
     -- Constructors need to be encoded differently depending on whether they're
     -- a record or not. This distinction is made by 'consToJSON':
     gToJSON opts targs = consToJSON opts targs . unM1
     {-# INLINE gToJSON #-}
+    gOmitField _ = const False
+    {-# INLINE gOmitField #-}
 
 instance ( AllNullary       (a :+: b) allNullary
          , SumToJSON  enc arity (a :+: b) allNullary
@@ -813,6 +822,8 @@ instance ( AllNullary       (a :+: b) allNullary
     gToJSON opts targs = (unTagged :: Tagged allNullary enc -> enc)
                        . sumToJSON opts targs
     {-# INLINE gToJSON #-}
+    gOmitField _ = const False
+    {-# INLINE gOmitField #-}
 
 --------------------------------------------------------------------------------
 -- Generic toJSON
@@ -826,22 +837,30 @@ instance GToJSON' Value arity V1 where
     -- rather easy:
     gToJSON _ _ x = x `seq` error "case: V1"
     {-# INLINE gToJSON #-}
+    gOmitField _ x = x `seq` error "case: V1"
+    {-# INLINE gOmitField #-}
 
 instance ToJSON a => GToJSON' Value arity (K1 i a) where
     -- Constant values are encoded using their ToJSON instance:
     gToJSON _opts _ = toJSON . unK1
     {-# INLINE gToJSON #-}
+    gOmitField _ = omitField . unK1
+    {-# INLINE gOmitField #-}
 
 instance ToJSON1 f => GToJSON' Value One (Rec1 f) where
     -- Recursive occurrences of the last type parameter are encoded using their
     -- ToJSON1 instance:
     gToJSON _opts (To1Args o tj tjl) = liftToJSON o tj tjl . unRec1
     {-# INLINE gToJSON #-}
+    gOmitField (To1Args o _ _) = liftOmitField o . unRec1
+    {-# INLINE gOmitField #-}
 
 instance GToJSON' Value arity U1 where
     -- Empty constructors are encoded to an empty array:
     gToJSON _opts _ _ = emptyArray
     {-# INLINE gToJSON #-}
+    gOmitField _ _ = False
+    {-# INLINE gOmitField #-}
 
 instance ( WriteProduct arity a, WriteProduct arity b
          , ProductSize        a, ProductSize        b
@@ -859,6 +878,8 @@ instance ( WriteProduct arity a, WriteProduct arity b
           lenProduct = (unTagged2 :: Tagged2 (a :*: b) Int -> Int)
                        productSize
     {-# INLINE gToJSON #-}
+    gOmitField _ _ = False
+    {-# INLINE gOmitField #-}
 
 instance ( ToJSON1 f
          , GToJSON' Value One g
@@ -871,6 +892,8 @@ instance ( ToJSON1 f
       let gtj = gToJSON opts targs in
       liftToJSON (const False) gtj (listValue gtj) . unComp1
     {-# INLINE gToJSON #-}
+    gOmitField targs = liftOmitField (gOmitField targs) . unComp1
+    {-# INLINE gOmitField #-}
 
 --------------------------------------------------------------------------------
 -- Generic toEncoding
@@ -880,22 +903,30 @@ instance GToJSON' Encoding arity V1 where
     -- rather easy:
     gToJSON _ _ x = case x of {}
     {-# INLINE gToJSON #-}
+    gOmitField _ x = case x of {}
+    {-# INLINE gOmitField #-}
 
 instance ToJSON a => GToJSON' Encoding arity (K1 i a) where
     -- Constant values are encoded using their ToJSON instance:
     gToJSON _opts _ = toEncoding . unK1
     {-# INLINE gToJSON #-}
+    gOmitField _ = omitField . unK1
+    {-# INLINE gOmitField #-}
 
 instance ToJSON1 f => GToJSON' Encoding One (Rec1 f) where
     -- Recursive occurrences of the last type parameter are encoded using their
     -- ToEncoding1 instance:
     gToJSON _opts (To1Args o te tel) = liftToEncoding o te tel . unRec1
     {-# INLINE gToJSON #-}
+    gOmitField (To1Args o _ _) = liftOmitField o . unRec1
+    {-# INLINE gOmitField #-}
 
 instance GToJSON' Encoding arity U1 where
     -- Empty constructors are encoded to an empty array:
     gToJSON _opts _ _ = E.emptyArray_
     {-# INLINE gToJSON #-}
+    gOmitField _ _ = False
+    {-# INLINE gOmitField #-}
 
 instance ( EncodeProduct  arity a
          , EncodeProduct  arity b
@@ -906,6 +937,8 @@ instance ( EncodeProduct  arity a
     -- 'encodeProduct':
     gToJSON opts targs p = E.list E.retagEncoding [encodeProduct opts targs p]
     {-# INLINE gToJSON #-}
+    gOmitField _ _ = False
+    {-# INLINE gOmitField #-}
 
 instance ( ToJSON1 f
          , GToJSON' Encoding One g
@@ -918,6 +951,8 @@ instance ( ToJSON1 f
       let gte = gToJSON opts targs in
       liftToEncoding (const False) gte (listEncoding gte) . unComp1
     {-# INLINE gToJSON #-}
+    gOmitField targs = liftOmitField (gOmitField targs) . unComp1
+    {-# INLINE gOmitField #-}
 
 --------------------------------------------------------------------------------
 
@@ -1167,47 +1202,13 @@ instance ( Monoid pairs
     {-# INLINE recordToPairs #-}
 
 instance ( Selector s
-         , GToJSON' enc arity (K1 i t)
+         , GToJSON' enc arity a
          , KeyValuePair enc pairs
-         , ToJSON t
-         ) => RecordToPairs enc pairs arity (S1 s (K1 i t))
+         ) => RecordToPairs enc pairs arity (S1 s a)
   where
     recordToPairs opts targs m1
       | omitNothingFields opts
-      , omitField (unK1 $ unM1 m1 :: t)
-      = mempty
-
-      | otherwise =
-        let key   = Key.fromString $ fieldLabelModifier opts (selName m1)
-            value = gToJSON opts targs (unM1 m1)
-         in key `pair` value
-    {-# INLINE recordToPairs #-}
-
-instance ( Selector s
-         , GToJSON' enc One (Rec1 f)
-         , KeyValuePair enc pairs
-         , ToJSON1 f
-         ) => RecordToPairs enc pairs One (S1 s (Rec1 f))
-  where
-    recordToPairs opts targs@(To1Args o _ _) m1
-      | omitNothingFields opts
-      , liftOmitField o $ unRec1 $ unM1 m1
-      = mempty
-
-      | otherwise =
-        let key   = Key.fromString $ fieldLabelModifier opts (selName m1)
-            value = gToJSON opts targs (unM1 m1)
-            in key `pair` value
-    {-# INLINE recordToPairs #-}
-
-instance ( Selector s
-         , GToJSON' enc One Par1
-         , KeyValuePair enc pairs
-         ) => RecordToPairs enc pairs One (S1 s Par1)
-  where
-    recordToPairs opts targs@(To1Args o _ _) m1
-      | omitNothingFields opts
-      , o (unPar1 (unM1 m1))
+      , gOmitField targs $ unM1 m1
       = mempty
 
       | otherwise =
